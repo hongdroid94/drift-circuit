@@ -25,6 +25,18 @@ const ROLLING_RESISTANCE = 0.02;
 const TAPER_FLOOR = 0.35;
 /** Slip below this is noise, not a drift. */
 const MIN_DRIFT_SPEED = 9;
+/**
+ * How far past the pure-grip yaw limit ordinary steering may push.
+ *
+ * Just over 1, so hard cornering still steps the tail out a little and feels
+ * alive, but stays under the drift threshold. Raising this toward 2 brings back
+ * the bug where steering alone spins the car.
+ */
+const GRIP_YAW_ALLOWANCE = 1.15;
+/** The handbrake is the deliberate "break traction now" input. */
+const HANDBRAKE_YAW_ALLOWANCE = 3.2;
+/** Multiplier applied to a car's driftYawBoost while a slide is already live. */
+const DRIFT_SUSTAIN_ALLOWANCE = 1.25;
 /** How hard the soft barrier pushes back, m/s^2. */
 const BARRIER_PUSH = 55;
 /** Metres past the tarmac edge before the barrier engages. */
@@ -248,10 +260,29 @@ export class Vehicle {
       // forward = (sin y, 0, cos y), d(forward)/dy points along -right.
       // Steering input is right-positive, so it enters inverted.
       let targetYawRate = -input.steer * def.turnRate * authority * rolling;
-      if (this.isDrifting) targetYawRate *= def.driftYawBoost;
-      if (input.handbrake && planarSpeed > 6) targetYawRate *= 1.35;
       // Reversing inverts the steering geometry, as in a real car.
       if (vLong < -0.5) targetYawRate *= -1;
+
+      // Clamp the demanded rotation to what the tyres can actually deliver.
+      //
+      // Holding a steady turn at speed v with yaw rate w needs a lateral
+      // acceleration of v*w. Without this clamp the heading rotated at the full
+      // steering rate no matter how little grip was left, so full lock at
+      // 60 km/h produced 60-89 degrees of slip on every car — a spin, not a
+      // drift, and it made the handbrake pointless because steering alone
+      // already broke traction.
+      //
+      // `allowance` is how far past the pure-grip limit the car may rotate:
+      // a sliver in normal cornering (so hard turns still feel alive), much
+      // more once the player deliberately provokes a slide.
+      let allowance = GRIP_YAW_ALLOWANCE;
+      if (input.handbrake && planarSpeed > 6) allowance = HANDBRAKE_YAW_ALLOWANCE;
+      else if (this.isDrifting) allowance = def.driftYawBoost * DRIFT_SUSTAIN_ALLOWANCE;
+
+      // Floor the divisor so the limit does not explode to infinity at a
+      // standstill; low-speed rotation is already governed by `rolling`.
+      const gripYawLimit = (def.lateralGrip * allowance) / Math.max(planarSpeed, 7);
+      targetYawRate = Math.max(-gripYawLimit, Math.min(gripYawLimit, targetYawRate));
 
       // Exponential approach is framerate-independent and has no overshoot.
       const blend = 1 - Math.exp(-def.turnResponse * dt);

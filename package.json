@@ -16,7 +16,8 @@
     "capture:states": "node scripts/capture-states.mjs",
     "verify:production": "node scripts/verify-production.mjs",
     "verify:all": "npm run typecheck && npm run build && npm run test",
-    "diagnose:steering": "node scripts/diagnose-steering.mjs"
+    "diagnose:steering": "node scripts/diagnose-steering.mjs",
+    "measure:drift": "node scripts/measure-drift-onset.mjs"
   },
   "dependencies": {
     "lil-gui": "^0.21.0",

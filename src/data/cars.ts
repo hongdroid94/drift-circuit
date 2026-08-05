@@ -61,7 +61,12 @@ export const CARS: CarDef[] = [
     lateralGrip: 15.5,
     driftGripFactor: 0.5,
     driftYawBoost: 1.35,
-    driftAngle: 0.26,
+    // 11.5 deg, not the 14.9 it started at. Comet is the only car unlocked at
+    // the start, and measurement put its handbrake slide at 14.5 deg peak —
+    // right on the old threshold, so the handbrake registered a drift only
+    // sometimes. A starter car that intermittently ignores the core input is
+    // worse than one that slides a little too readily.
+    driftAngle: 0.2,
     boostGain: 2.4,
     boostMax: 1.5,
     boostPower: 12,

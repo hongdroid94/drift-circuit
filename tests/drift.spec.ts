@@ -107,5 +107,51 @@ test.describe('drift mechanic', () => {
 
       await page.evaluate(() => window.__THREE_GAME_TEST_HOOKS__?.release());
     });
+
+    test(`${car.name} does not drift on steering alone at moderate speed`, async ({ page }) => {
+      await startRace(page, car.id);
+      await getUpToSpeed(page, 70);
+
+      // Full lock, no handbrake. This must NOT register a drift: if it does,
+      // the handbrake is redundant and the mechanic stops being a decision.
+      //
+      // Regression guard. Before the yaw rate was clamped by available grip,
+      // this exact input produced 60-89 degrees of slip on every car — a spin
+      // rather than a drift — because the heading rotated at the full steering
+      // rate no matter how little grip remained.
+      await page.evaluate(() => window.__THREE_GAME_TEST_HOOKS__?.drive(1, 1));
+
+      let peakSlip = 0;
+      let sawDrifting = false;
+      for (let i = 0; i < 12; i += 1) {
+        const snapshot = await page.evaluate(() => {
+          const d = window.__THREE_GAME_DIAGNOSTICS__;
+          return {
+            slip: Math.abs(d?.player.slipDegrees ?? 0),
+            drifting: d?.player.drifting ?? false,
+            speed: d?.player.speedKph ?? 0,
+          };
+        });
+        // Only judge while still travelling quickly; once the car has scrubbed
+        // down to a crawl the slip reading stops being meaningful.
+        if (snapshot.speed > 40) {
+          peakSlip = Math.max(peakSlip, snapshot.slip);
+          sawDrifting ||= snapshot.drifting;
+        }
+        await page.waitForTimeout(70);
+      }
+
+      expect(
+        sawDrifting,
+        `${car.name} drifted from steering alone (peak slip ${peakSlip.toFixed(1)}deg) — ` +
+          'the grip clamp on yaw rate has regressed',
+      ).toBe(false);
+
+      // Cornering should still be lively, just short of a drift. A completely
+      // dead front end would pass the check above for the wrong reason.
+      expect(peakSlip, `${car.name} showed no slide at all at full lock`).toBeGreaterThan(2);
+
+      await page.evaluate(() => window.__THREE_GAME_TEST_HOOKS__?.release());
+    });
   }
 });

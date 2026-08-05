@@ -43,6 +43,12 @@ traction, hold the angle, and the boost is paid out when you straighten up. That
 is what stops the optimal line from collapsing into "shortest path" and gives
 lap-time competition some depth.
 
+Crucially, **steering alone should not drift you.** Hard cornering steps the
+tail out a little; the handbrake is what actually breaks traction. If plain
+steering triggered a drift, the handbrake would be redundant and the decision
+the whole mechanic is built around would disappear. This is enforced by the yaw
+clamp below and guarded by a test.
+
 Each race is 3 laps. Your **best single lap** is the record that unlocks cars;
 total time is shown for context. Laps are validated by sector gates in order, so
 cutting the circuit or reversing over the line does not score.
@@ -81,6 +87,20 @@ barriers are the custom-collision case.)
 Drag is *derived*, not hand-tuned: the quadratic coefficient is solved so full
 throttle equilibrates at exactly the car's declared `topSpeed`. An earlier build
 hard-coded it and every car silently capped at 66 km/h against a 187 km/h spec.
+
+**Yaw rate is clamped by available grip.** Holding a turn at speed `v` with yaw
+rate `w` needs a lateral acceleration of `v*w`. Without a clamp the heading
+rotates at the full steering rate however little grip is left, and full lock at
+60 km/h produced 60-89 degrees of slip on every car — a spin, not a drift.
+`Vehicle` therefore limits the demanded yaw to `lateralGrip * allowance / v`,
+where the allowance is a sliver above 1 for normal steering and much larger
+under the handbrake. Measured with `npm run measure:drift`:
+
+| | full lock, no handbrake | |
+|---|---|---|
+| | before | after |
+| Peak slip | 60-89 deg (spin) | 5-20 deg |
+| Drifts at | 60 km/h, every car | Comet/Ember never, Vortex 120 km/h |
 
 **Analytic ground queries, not raycasts.** The track is a closed Catmull-Rom
 spline sampled every ~2 m into a uniform grid. Height, lateral offset, road width
@@ -137,6 +157,10 @@ npm run verify:production   # smoke-tests the built bundle through the real UI
 | `drift.spec.ts` | **Every car can break traction with realistic input and bank boost** |
 | `bot-playtest.spec.ts` | All three circuits are drivable end to end; laps validate |
 | `car-model.spec.ts` | **Basis convention and mesh orientation** — no browser needed |
+
+`drift.spec.ts` asserts both directions of the mechanic per car: the handbrake
+*must* break traction and bank boost, and full lock *must not*. Tuning that
+satisfies only one of those is a broken game either way.
 
 `npm run diagnose:steering` measures, objectively, whether "steer right" moves the
 car toward the right-hand side of the *screen*. It projects the car's
