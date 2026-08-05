@@ -1,0 +1,447 @@
+/*
+ * All UI is DOM rather than in-canvas text. It costs zero draw calls, scales
+ * crisply at any DPR, and gets focus/tap handling from the browser for free —
+ * which matters more than styling flexibility on a mobile-first portal game.
+ */
+
+:root {
+  --ink: #f4f6fb;
+  --ink-dim: #a5adbf;
+  --bg: #0b0d12;
+  --panel: rgba(14, 17, 24, 0.86);
+  --accent: #ffcc33;
+  --good: #4ade80;
+  --bad: #f87171;
+  --radius: 14px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  font-family: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  /* Stop iOS from bouncing the page or zooming on a double tap mid-corner. */
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+
+#game-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hidden { display: none !important; }
+
+/* ---------------------------------------------------------------- HUD --- */
+
+#hud {
+  padding: calc(12px + var(--safe-top)) calc(14px + var(--safe-right))
+           calc(12px + var(--safe-bottom)) calc(14px + var(--safe-left));
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+}
+
+.hud-top-left { position: absolute; top: calc(12px + var(--safe-top)); left: calc(14px + var(--safe-left)); }
+/* Sits below the pause button, which occupies the same corner — at the same
+ * top offset the drift score renders straight through it. */
+.hud-top-right { position: absolute; top: calc(60px + var(--safe-top)); right: calc(14px + var(--safe-right)); text-align: right; }
+.hud-bottom-right { position: absolute; bottom: calc(14px + var(--safe-bottom)); right: calc(14px + var(--safe-right)); text-align: right; }
+.hud-center-top { position: absolute; top: calc(10px + var(--safe-top)); left: 50%; transform: translateX(-50%); text-align: center; }
+
+.label {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+
+#lap-time { font-size: clamp(28px, 5.5vw, 46px); font-weight: 700; line-height: 1; }
+#best-time { font-size: 13px; color: var(--ink-dim); margin-top: 2px; }
+
+#delta {
+  font-size: clamp(16px, 3vw, 24px);
+  font-weight: 700;
+  margin-top: 4px;
+  min-height: 1.2em;
+}
+#delta.ahead { color: var(--good); }
+#delta.behind { color: var(--bad); }
+
+#speed-value { font-size: clamp(38px, 8vw, 68px); font-weight: 800; line-height: 0.95; }
+#speed-unit { font-size: 13px; color: var(--ink-dim); letter-spacing: 0.16em; }
+
+#boost-track {
+  width: clamp(120px, 22vw, 210px);
+  height: 9px;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-top: 8px;
+  margin-left: auto;
+}
+#boost-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #46b8ff, #9be8ff);
+  border-radius: 99px;
+  transition: width 90ms linear;
+}
+#boost-track.ready #boost-fill { background: linear-gradient(90deg, #ffcc33, #fff1a8); }
+
+#drift-wrap { min-height: 76px; }
+#drift-score {
+  font-size: clamp(24px, 5vw, 40px);
+  font-weight: 800;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+#drift-score.active { opacity: 1; }
+#drift-multiplier {
+  font-size: clamp(14px, 2.6vw, 20px);
+  font-weight: 700;
+  color: #fff1a8;
+}
+#drift-total { font-size: 13px; color: var(--ink-dim); }
+
+#banner {
+  position: absolute;
+  top: 22%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.9);
+  font-size: clamp(30px, 7vw, 64px);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  transition: opacity 180ms ease, transform 180ms ease;
+  white-space: nowrap;
+}
+#banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+#offtrack-warning {
+  position: absolute;
+  bottom: 22%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: clamp(13px, 2.4vw, 17px);
+  font-weight: 700;
+  color: var(--bad);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+#offtrack-warning.show { opacity: 1; }
+
+/* ------------------------------------------------------------ overlays --- */
+
+#overlay {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Semi-transparent so the live circuit behind the menu stays visible; the
+     panel itself carries the contrast the text needs. */
+  background: radial-gradient(circle at 50% 35%, rgba(8, 10, 16, 0.45), rgba(4, 6, 10, 0.82));
+  padding: calc(16px + var(--safe-top)) calc(16px + var(--safe-right))
+           calc(16px + var(--safe-bottom)) calc(16px + var(--safe-left));
+  overflow-y: auto;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  padding: clamp(16px, 3vw, 28px);
+  width: min(660px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+}
+
+.title {
+  font-size: clamp(26px, 5vw, 42px);
+  font-weight: 800;
+  margin: 0 0 2px;
+  letter-spacing: -0.01em;
+}
+.subtitle { color: var(--ink-dim); font-size: 14px; margin: 0 0 18px; }
+
+.section-label {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  font-weight: 700;
+  margin: 16px 0 8px;
+}
+
+.card-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.card {
+  position: relative;
+  text-align: left;
+  padding: 12px 13px;
+  border-radius: 11px;
+  border: 1.5px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+.card:hover:not(:disabled) { background: rgba(255, 255, 255, 0.09); transform: translateY(-1px); }
+.card.selected { border-color: var(--accent); background: rgba(255, 204, 51, 0.12); }
+.card:disabled { opacity: 0.4; cursor: not-allowed; }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.card-name { font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 7px; }
+.card-blurb { font-size: 12px; color: var(--ink-dim); margin-top: 3px; line-height: 1.35; }
+.card-meta { font-size: 11px; color: var(--accent); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.card-lock { font-size: 11px; color: var(--ink-dim); margin-top: 6px; }
+
+.swatch { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; }
+.difficulty { display: inline-flex; gap: 2px; margin-left: auto; }
+.pip { width: 6px; height: 6px; border-radius: 99px; background: rgba(255, 255, 255, 0.2); }
+.pip.on { background: var(--accent); }
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 22px;
+  border-radius: 11px;
+  border: none;
+  font: inherit;
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+  background: var(--accent);
+  color: #1a1405;
+  transition: filter 120ms ease, transform 120ms ease;
+}
+.button:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.button.secondary { background: rgba(255, 255, 255, 0.1); color: var(--ink); }
+.button.wide { width: 100%; margin-top: 18px; }
+
+.button-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.button-row .button { flex: 1 1 140px; }
+
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+.result-cell {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  padding: 11px 12px;
+}
+.result-cell .label { margin-bottom: 3px; }
+.result-value { font-size: clamp(19px, 3.4vw, 26px); font-weight: 800; font-variant-numeric: tabular-nums; }
+.result-value.gold { color: var(--accent); }
+
+.medal-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.medal {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 11px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+.medal.earned { background: rgba(255, 204, 51, 0.18); color: var(--accent); }
+
+.toast {
+  margin-top: 12px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: rgba(255, 204, 51, 0.14);
+  border: 1px solid rgba(255, 204, 51, 0.35);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.hint { font-size: 12px; color: var(--ink-dim); margin-top: 14px; line-height: 1.5; }
+.hint kbd {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+}
+
+.settings-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.chip {
+  padding: 7px 13px;
+  border-radius: 99px;
+  border: 1.5px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chip.selected { border-color: var(--accent); color: var(--accent); }
+
+/* -------------------------------------------------------------- touch --- */
+
+#touch { pointer-events: none; }
+#touch button {
+  position: absolute;
+  pointer-events: auto;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+  border-radius: 50%;
+  font-size: 26px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(3px);
+  transition: background 80ms ease, transform 80ms ease;
+}
+#touch button.pressed { background: rgba(255, 204, 51, 0.4); transform: scale(0.94); }
+
+#touch-left  { left: calc(18px + var(--safe-left)); bottom: calc(24px + var(--safe-bottom)); width: 76px; height: 76px; }
+#touch-right { left: calc(106px + var(--safe-left)); bottom: calc(24px + var(--safe-bottom)); width: 76px; height: 76px; }
+#touch-accel { right: calc(18px + var(--safe-right)); bottom: calc(24px + var(--safe-bottom)); width: 88px; height: 88px; }
+#touch-brake { right: calc(118px + var(--safe-right)); bottom: calc(24px + var(--safe-bottom)); width: 70px; height: 70px; font-size: 21px; }
+
+/*
+ * Landscape phones are wide but very short (a Pixel 5 is 393 CSS px tall). The
+ * default HUD is sized off viewport *width*, which on that shape produces a
+ * 68 px speed readout sitting on top of the pedals. Everything below is driven
+ * by height instead, and the speed/boost group moves to the dead space in the
+ * bottom centre between the two thumb zones.
+ */
+@media (max-height: 500px) {
+  #touch-left, #touch-right { width: 64px; height: 64px; bottom: calc(12px + var(--safe-bottom)); font-size: 22px; }
+  #touch-right { left: calc(90px + var(--safe-left)); }
+  #touch-accel { width: 74px; height: 74px; bottom: calc(12px + var(--safe-bottom)); font-size: 24px; }
+  #touch-brake { width: 60px; height: 60px; bottom: calc(12px + var(--safe-bottom)); right: calc(102px + var(--safe-right)); font-size: 19px; }
+
+  .hud-bottom-right {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(10px + var(--safe-bottom));
+    text-align: center;
+  }
+  #speed-value { font-size: 40px; }
+  #speed-unit { font-size: 10px; }
+  #boost-track { margin-left: auto; margin-right: auto; width: 130px; height: 7px; }
+
+  #lap-time { font-size: 26px; }
+  #best-time { font-size: 11px; }
+  #delta { font-size: 15px; }
+  .hud-top-right { top: calc(52px + var(--safe-top)); }
+  #drift-score { font-size: 22px; }
+  #drift-multiplier { font-size: 13px; }
+  #banner { font-size: 34px; top: 26%; }
+  #offtrack-warning { bottom: 30%; font-size: 12px; }
+  #pause-button { width: 34px; height: 34px; font-size: 13px; }
+}
+
+/* Portrait phones: pedals stack toward the bottom corners, HUD shrinks. */
+@media (max-width: 520px) and (orientation: portrait) {
+  #touch-left, #touch-right, #touch-accel, #touch-brake { width: 70px; height: 70px; }
+  #touch-right { left: calc(98px + var(--safe-left)); }
+  #touch-brake { right: calc(100px + var(--safe-right)); font-size: 20px; }
+  #speed-value { font-size: 44px; }
+}
+
+#pause-button {
+  position: absolute;
+  top: calc(12px + var(--safe-top));
+  right: calc(14px + var(--safe-right));
+  pointer-events: auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(10, 12, 18, 0.55);
+  color: var(--ink);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+#diagnostics {
+  position: absolute;
+  left: calc(14px + var(--safe-left));
+  bottom: calc(14px + var(--safe-bottom));
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+  background: rgba(0, 0, 0, 0.45);
+  padding: 6px 8px;
+  border-radius: 7px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+#loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--bg);
+  z-index: 10;
+}
+.spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid rgba(255, 255, 255, 0.16);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
