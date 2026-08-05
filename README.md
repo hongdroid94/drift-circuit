@@ -1,5 +1,7 @@
 # Drift Circuit
 
+**▶ Play: https://drift-circuit-game.vercel.app**
+
 A browser 3D time-attack racer. Three circuits, three cars, three laps per race.
 Drift to bank boost, chain corners for a score multiplier, then race your own
 ghost.
@@ -181,6 +183,16 @@ absolute `/assets/…` URLs 404 there while working fine locally.
 
 Test hooks (`__THREE_GAME_TEST_HOOKS__`, `__THREE_GAME_DIAGNOSTICS__`) are
 compiled out of production builds; `verify:production` asserts their absence.
+
+Live on Vercel, auto-deploying from `main`. `vercel.json` pins the Vite build and
+sets caching: content-hashed assets are `immutable` for a year, the entry
+document is `must-revalidate`. Framing is deliberately left allowed, since
+portals embed games in an iframe — so no `X-Frame-Options`/`frame-ancestors`.
+
+Vercel projects are created with SSO deployment protection on, which returns a
+302 to `vercel.com/sso-api` for anyone not logged into the team. That has to be
+cleared for a public game (`ssoProtection: null`), or the URL looks broken to
+everyone but you.
 
 `systems/Portal.ts` wraps the CrazyGames SDK defensively — every call is a no-op
 when the SDK is absent, so the same build runs on a portal, on itch.io, on a
