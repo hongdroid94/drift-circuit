@@ -266,6 +266,11 @@ function buildHull(profile: Profile): THREE.BufferGeometry {
 
   // Extrusion runs along +Z; stand it up so depth becomes height.
   geom.rotateX(-Math.PI / 2);
+  // That rotation maps the shape's +y to world -Z, so the nose we drew at +y
+  // lands at the BACK. Everything else on the car (headlights, spoiler, steered
+  // wheels) is authored with +Z as forward, so spin the hull to match — without
+  // this the car drives tail-first.
+  geom.rotateY(Math.PI);
   geom.translate(0, 0.24, 0);
   geom.computeVertexNormals();
   return geom;
@@ -296,6 +301,8 @@ function buildCabin(profile: Profile): THREE.BufferGeometry {
   });
 
   geom.rotateX(-Math.PI / 2);
+  // Same reversal as the hull: put the windscreen end at +Z.
+  geom.rotateY(Math.PI);
   geom.translate(0, 0.66, 0.05);
   geom.computeVertexNormals();
   return geom;

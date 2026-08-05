@@ -34,6 +34,11 @@ interface ThreeGameDiagnostics {
     geometries: number;
     textures: number;
   };
+  /** Camera world basis. Screen-right is the camera's local +X axis. */
+  camera: {
+    right: { x: number; y: number; z: number };
+    forward: { x: number; y: number; z: number };
+  };
   canvas: {
     clientWidth: number;
     clientHeight: number;

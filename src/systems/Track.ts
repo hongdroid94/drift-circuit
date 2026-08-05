@@ -82,10 +82,9 @@ export class Track {
       // Right-hand vector on the horizontal plane. Using world up rather than
       // the Frenet normal keeps the road from rolling on steep sections.
       //
-      // MUST be `up x forward`, matching Vehicle's basis. The opposite order
-      // yields the left vector, which silently flips the road ribbon's triangle
-      // winding and backface-culls the entire track.
-      const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+      // `forward x up`, matching Vehicle's basis: the true screen-right.
+      // The road ribbon's triangle winding below is ordered for this.
+      const right = new THREE.Vector3().crossVectors(forward, up).normalize();
       if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
 
       if (previous) distance += position.distanceTo(previous);
@@ -331,11 +330,12 @@ export class Track {
       const b = a + 1;
       const c = a + 2;
       const d = a + 3;
-      roadIndices.push(a, c, b, b, c, d);
+      // Wound for right = forward x up, so the surface normal points +Y.
+      roadIndices.push(a, b, c, b, d, c);
 
       const ca = i * 4;
-      curbIndices.push(ca, ca + 1, ca + 4, ca + 1, ca + 5, ca + 4);
-      curbIndices.push(ca + 2, ca + 6, ca + 3, ca + 3, ca + 6, ca + 7);
+      curbIndices.push(ca, ca + 4, ca + 1, ca + 1, ca + 4, ca + 5);
+      curbIndices.push(ca + 2, ca + 3, ca + 6, ca + 3, ca + 7, ca + 6);
     }
 
     const roadGeom = new THREE.BufferGeometry();

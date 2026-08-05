@@ -46,9 +46,10 @@ export class Autopilot {
     const dirZ = toTargetZ / length;
 
     // Cross product on the horizontal plane gives the turn direction.
+    // Sign matches the right-positive steering convention in Vehicle.
     const cross = forwardX * dirZ - forwardZ * dirX;
     const dot = forwardX * dirX + forwardZ * dirZ;
-    const angle = Math.atan2(-cross, dot);
+    const angle = Math.atan2(cross, dot);
 
     let steer = Math.max(-1, Math.min(1, angle * 2.1));
 

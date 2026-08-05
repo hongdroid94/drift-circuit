@@ -134,6 +134,29 @@ npm run verify:production   # smoke-tests the built bundle through the real UI
 | `visual.spec.ts` | Boots, renders a non-blank scene, responds to input, clean console |
 | `drift.spec.ts` | **Every car can break traction with realistic input and bank boost** |
 | `bot-playtest.spec.ts` | All three circuits are drivable end to end; laps validate |
+| `car-model.spec.ts` | **Basis convention and mesh orientation** — no browser needed |
+
+`npm run diagnose:steering` measures, objectively, whether "steer right" moves the
+car toward the right-hand side of the *screen*. It projects the car's
+displacement onto the camera's own +X axis, so the answer does not depend on
+anyone's handedness reasoning being correct.
+
+### The coordinate convention (read before touching Vehicle or Track)
+
+`right = forward x up`. **Not** `up x forward` — in this system that is the
+car's *left*.
+
+The chase camera looks along `+forward`, and a camera looking down +Z has its
+screen-right on -X. Getting this backwards is not a compile error and not a
+crash: it inverts steering for the player, mirrors body roll, and flips the road
+ribbon's triangle winding so the entire track gets backface-culled. All three of
+those shipped at once during development, and the road-invisible symptom was
+initially "fixed" by matching the *wrong* convention, which hid the steering bug
+behind a working-looking screenshot.
+
+Because `yaw` grows toward the car's left (`d(forward)/d(yaw) = -right`),
+right-positive steering input enters `Vehicle` with a negative sign.
+`car-model.spec.ts` asserts all of this directly.
 
 `drift.spec.ts` exists because the failure it catches is silent: tuning can leave
 a car whose slip threshold is so high that ordinary play never registers a drift.
@@ -181,3 +204,6 @@ game has.
 - **Ghost is transform-sampled, not input-replayed** — a few KB per lap, but it
   survives physics tuning, which input replay would not.
 - Rewarded-ad hooks exist in `Portal` but nothing in the game spends them yet.
+- Body roll direction during cornering has not been visually verified; it is
+  cosmetic and derived from lateral acceleration, so a sign error there would be
+  subtle rather than obvious.

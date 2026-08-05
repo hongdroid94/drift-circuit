@@ -15,7 +15,8 @@
     "inspect:canvas": "node scripts/inspect-threejs-canvas.mjs",
     "capture:states": "node scripts/capture-states.mjs",
     "verify:production": "node scripts/verify-production.mjs",
-    "verify:all": "npm run typecheck && npm run build && npm run test"
+    "verify:all": "npm run typecheck && npm run build && npm run test",
+    "diagnose:steering": "node scripts/diagnose-steering.mjs"
   },
   "dependencies": {
     "lil-gui": "^0.21.0",

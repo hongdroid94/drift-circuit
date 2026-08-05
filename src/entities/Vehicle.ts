@@ -126,8 +126,13 @@ export class Vehicle {
     const sin = Math.sin(this.yaw);
     const cos = Math.cos(this.yaw);
     this.forward.set(sin, 0, cos);
-    // right = up x forward
-    this.right.set(cos, 0, -sin);
+    // right = forward x up.
+    //
+    // NOT `up x forward`, which is this system's *left*. The chase camera looks
+    // along +forward, and a camera looking down +Z has its screen-right on -X;
+    // getting this backwards silently inverted steering and forced a
+    // compensating triangle-winding flip in the road mesh.
+    this.right.set(-cos, 0, sin);
   }
 
   private snapshot(): void {
@@ -239,7 +244,10 @@ export class Vehicle {
       // rotates on the spot looks broken.
       const rolling = Math.min(1, planarSpeed / 3.5);
 
-      let targetYawRate = input.steer * def.turnRate * authority * rolling;
+      // Negative because yaw grows toward the car's LEFT: with
+      // forward = (sin y, 0, cos y), d(forward)/dy points along -right.
+      // Steering input is right-positive, so it enters inverted.
+      let targetYawRate = -input.steer * def.turnRate * authority * rolling;
       if (this.isDrifting) targetYawRate *= def.driftYawBoost;
       if (input.handbrake && planarSpeed > 6) targetYawRate *= 1.35;
       // Reversing inverts the steering geometry, as in a real car.

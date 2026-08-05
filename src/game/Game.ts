@@ -247,6 +247,20 @@ export class Game {
         geometries: info.memory.geometries,
         textures: info.memory.textures,
       },
+      camera: {
+        // Column 0 of the world matrix is the camera's local +X = screen right.
+        right: {
+          x: this.camera.matrixWorld.elements[0],
+          y: this.camera.matrixWorld.elements[1],
+          z: this.camera.matrixWorld.elements[2],
+        },
+        forward: {
+          // Cameras look down local -Z, so negate column 2.
+          x: -this.camera.matrixWorld.elements[8],
+          y: -this.camera.matrixWorld.elements[9],
+          z: -this.camera.matrixWorld.elements[10],
+        },
+      },
       canvas: {
         clientWidth: canvas.clientWidth,
         clientHeight: canvas.clientHeight,
@@ -626,8 +640,9 @@ export class Game {
     // Rear axle, offset to each side.
     const rearX = vehicle.position.x - sinYaw * 1.28;
     const rearZ = vehicle.position.z - cosYaw * 1.28;
-    const rightX = cosYaw;
-    const rightZ = -sinYaw;
+    // Same basis as Vehicle: right = forward x up.
+    const rightX = -cosYaw;
+    const rightZ = sinYaw;
     const groundY = vehicle.position.y - 0.42;
 
     for (let i = 0; i < 2; i += 1) {
