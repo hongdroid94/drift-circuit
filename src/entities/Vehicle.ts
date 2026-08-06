@@ -28,17 +28,30 @@ const MIN_DRIFT_SPEED = 9;
 /**
  * How far past the pure-grip yaw limit ordinary steering may push.
  *
- * Just over 1, so hard cornering still steps the tail out a little and feels
- * alive, but stays under the drift threshold. Raising this toward 2 brings back
- * the bug where steering alone spins the car.
+ * Exactly 1: steering demands at most the lateral acceleration the tyres can
+ * actually deliver, so slip settles at a few degrees and never accumulates.
+ * At 1.15 it demanded 15% more grip than existed, which is a small deficit that
+ * builds without limit if you simply hold the turn — full lock at 120 km/h
+ * reached 22 degrees and tripped a drift the player never asked for.
+ *
+ * Breaking traction is supposed to cost a deliberate input, so anything above
+ * 1 belongs to the handbrake and to sustaining a slide already underway.
  */
-const GRIP_YAW_ALLOWANCE = 1.15;
+const GRIP_YAW_ALLOWANCE = 1;
 /** The handbrake is the deliberate "break traction now" input. */
 const HANDBRAKE_YAW_ALLOWANCE = 3.2;
 /** Multiplier applied to a car's driftYawBoost while a slide is already live. */
 const DRIFT_SUSTAIN_ALLOWANCE = 1.25;
-/** How hard the soft barrier pushes back, m/s^2. */
-const BARRIER_PUSH = 55;
+/**
+ * Restoring acceleration once the car is past the barrier line, m/s^2.
+ *
+ * Only a nudge now. The barrier's actual job — stopping outward motion — is
+ * done by cancelling the outward velocity component, so this no longer has to
+ * be large enough to reverse a car on its own.
+ */
+const BARRIER_PUSH = 14;
+/** How much outward speed the barrier gives back as a bounce. Nearly none. */
+const BARRIER_RESTITUTION = 0.15;
 /** Metres past the tarmac edge before the barrier engages. */
 const BARRIER_MARGIN = 2.6;
 
@@ -69,6 +82,8 @@ export class Vehicle {
   slipAngle = 0;
   isDrifting = false;
   offTrack = false;
+  /** True on any step the soft barrier is shoving the car back toward the road. */
+  atBarrier = false;
   /** Lap progress in [0,1) from the track spline. */
   progress = 0;
   /** Set for one step when a drift ends and boost is awarded. */
@@ -246,6 +261,32 @@ export class Vehicle {
       }
     }
 
+    // --- available grip ----------------------------------------------------
+    // Computed once, before the heading, because both the yaw clamp and the
+    // lateral force have to agree on how much grip there actually is. They used
+    // to disagree: the clamp allowed rotation based on the nominal
+    // `def.lateralGrip` while the tyres were only delivering a fraction of it.
+    // On grass that meant the car was permitted to rotate at twice what it
+    // could hold, and once the slide tripped `isDrifting` the grip halved again
+    // while the allowance went *up* — measured at 87 degrees of slip from a
+    // 35% steering input at 60 km/h. A spin, from clipping the verge.
+    let gripLimit = def.lateralGrip;
+    if (this.isDrifting) gripLimit *= def.driftGripFactor;
+    if (this.offTrack) gripLimit *= 0.5;
+
+    // Grip the car still has to *rotate* with, as opposed to hold a line with.
+    //
+    // Everything above costs both axles, so it is already counted. The
+    // handbrake is different: it locks the rear only, which is the entire
+    // reason a handbrake turn rotates the car instead of just slowing it.
+    // Charging it against steering too made the clamp cut the yaw rate by 3.3x
+    // the moment the player pulled the handbrake, and the starter car could no
+    // longer break traction at all — the core mechanic, silently gone.
+    const steeringGrip = gripLimit;
+    // The handbrake is the player's deliberate 'break traction now' button;
+    // at 0.45 it barely stepped the rear out on the grip car.
+    if (input.handbrake) gripLimit *= 0.3;
+
     // --- heading -----------------------------------------------------------
     if (this.grounded) {
       const speedRatio = Math.min(1, planarSpeed / def.topSpeed);
@@ -272,16 +313,18 @@ export class Vehicle {
       // drift, and it made the handbrake pointless because steering alone
       // already broke traction.
       //
-      // `allowance` is how far past the pure-grip limit the car may rotate:
-      // a sliver in normal cornering (so hard turns still feel alive), much
-      // more once the player deliberately provokes a slide.
+      // `allowance` is the ratio of demanded lateral acceleration to available
+      // grip. At 1 the car corners at exactly the limit and slip settles at a
+      // few degrees; above 1 the deficit accumulates and the slide grows. So
+      // ordinary steering sits at 1 — no amount of lock or speed alone can
+      // break traction — and only a deliberate input goes past it.
       let allowance = GRIP_YAW_ALLOWANCE;
       if (input.handbrake && planarSpeed > 6) allowance = HANDBRAKE_YAW_ALLOWANCE;
       else if (this.isDrifting) allowance = def.driftYawBoost * DRIFT_SUSTAIN_ALLOWANCE;
 
       // Floor the divisor so the limit does not explode to infinity at a
       // standstill; low-speed rotation is already governed by `rolling`.
-      const gripYawLimit = (def.lateralGrip * allowance) / Math.max(planarSpeed, 7);
+      const gripYawLimit = (steeringGrip * allowance) / Math.max(planarSpeed, 7);
       targetYawRate = Math.max(-gripYawLimit, Math.min(gripYawLimit, targetYawRate));
 
       // Exponential approach is framerate-independent and has no overshoot.
@@ -298,13 +341,6 @@ export class Vehicle {
     // --- lateral grip ------------------------------------------------------
     let latAccel = 0;
     if (this.grounded) {
-      let gripLimit = def.lateralGrip;
-      if (this.isDrifting) gripLimit *= def.driftGripFactor;
-      // The handbrake is the player's deliberate 'break traction now' button;
-      // at 0.45 it barely stepped the rear out on the grip car.
-      if (input.handbrake) gripLimit *= 0.3;
-      if (this.offTrack) gripLimit *= 0.5;
-
       // Pull the velocity vector back toward the heading, capped by available
       // grip. The cap is the entire drift mechanic: exceed it and the slide
       // persists instead of snapping straight.
@@ -341,15 +377,65 @@ export class Vehicle {
 
     // --- soft barrier ------------------------------------------------------
     const overshoot = Math.abs(after.lateral) - (after.halfWidth + BARRIER_MARGIN);
+    this.atBarrier = overshoot > 0;
     if (overshoot > 0) {
-      const inward = -Math.sign(after.lateral);
+      // Outward track normal at the car.
+      const outward = Math.sign(after.lateral);
+      const nx = after.right.x * outward;
+      const nz = after.right.z * outward;
+
+      // Direction of travel before the barrier touches it, so the heading can
+      // be turned by exactly as much as the barrier turns the velocity.
+      const travelBefore = Math.atan2(this.velocity.x, this.velocity.z);
+      const movingBefore = Math.hypot(this.velocity.x, this.velocity.z) > 2;
+
+      // A wall takes away outward motion; it does not shove the car sideways.
+      // This used to add BARRIER_PUSH inward as a raw acceleration — at 55
+      // m/s^2 that is several times tyre grip, and the heading has no way to
+      // follow it, so every metre of it landed as slip angle. Measured: a
+      // 35% steering input at 60 km/h that brushed the verge went from 6.7
+      // degrees of slip to 87 within a second of the barrier engaging, and
+      // 102 km/h collapsed to 2. Removing the outward component instead
+      // bleeds the same energy without inventing lateral velocity.
+      const vOut = this.velocity.x * nx + this.velocity.z * nz;
+      if (vOut > 0) {
+        const scale = vOut * (1 + BARRIER_RESTITUTION);
+        this.velocity.x -= nx * scale;
+        this.velocity.z -= nz * scale;
+      }
+
+      // A gentle restoring nudge on top, so sitting against the barrier eases
+      // the car back onto the tarmac rather than parking it in the scenery.
       const push = Math.min(1, overshoot / 3) * BARRIER_PUSH;
-      this.velocity.x += after.right.x * inward * push * dt;
-      this.velocity.z += after.right.z * inward * push * dt;
+      this.velocity.x -= nx * push * dt;
+      this.velocity.z -= nz * push * dt;
       // Scrub speed against the wall rather than bouncing, which would fling
       // the player back across the track.
       this.velocity.x *= 0.965;
       this.velocity.z *= 0.965;
+
+      // Turn the car by however much the barrier just turned its travel.
+      //
+      // Slip angle is the gap between heading and direction of travel, so
+      // editing velocity while leaving the heading alone *creates* slip out of
+      // nothing — the same defect as clamping yaw against grip the tyres did
+      // not have. Measured before this: the step the barrier engaged took slip
+      // from 6.7 degrees to 42, and the car was flagged as drifting because it
+      // had been shoved, not because the tyres let go.
+      //
+      // A real car scraping a wall is redirected bodily, so the heading
+      // follows the whole rotation rather than a fraction of it.
+      const scrapeSpeed = Math.hypot(this.velocity.x, this.velocity.z);
+      if (movingBefore && scrapeSpeed > 2) {
+        const travelAfter = Math.atan2(this.velocity.x, this.velocity.z);
+        // Wrap to +-pi so the correction takes the short way round.
+        const turned = Math.atan2(
+          Math.sin(travelAfter - travelBefore),
+          Math.cos(travelAfter - travelBefore),
+        );
+        this.yaw += turned;
+        this.updateBasis();
+      }
     }
 
     this.updateVisualLean(dt, longAccel, latAccel);

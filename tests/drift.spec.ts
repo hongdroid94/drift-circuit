@@ -121,25 +121,34 @@ test.describe('drift mechanic', () => {
       // rate no matter how little grip remained.
       await page.evaluate(() => window.__THREE_GAME_TEST_HOOKS__?.drive(1, 1));
 
+      // Held long enough for slip to *accumulate*, not just spike. An earlier
+      // version of this test sampled for 0.8s and ignored anything under
+      // 40 km/h, and passed a build where holding the same lock for 2.4s
+      // reached 22 degrees and drifted — it stopped watching immediately
+      // before the failure it existed to catch.
+      //
+      // Off-road samples are excluded instead: grass halves grip, so a slide
+      // there is the surface talking, not steering breaking traction.
       let peakSlip = 0;
       let sawDrifting = false;
-      for (let i = 0; i < 12; i += 1) {
+      let sawOnRoadSample = false;
+      for (let i = 0; i < 30; i += 1) {
         const snapshot = await page.evaluate(() => {
           const d = window.__THREE_GAME_DIAGNOSTICS__;
           return {
             slip: Math.abs(d?.player.slipDegrees ?? 0),
             drifting: d?.player.drifting ?? false,
-            speed: d?.player.speedKph ?? 0,
+            offTrack: d?.player.offTrack ?? false,
           };
         });
-        // Only judge while still travelling quickly; once the car has scrubbed
-        // down to a crawl the slip reading stops being meaningful.
-        if (snapshot.speed > 40) {
+        if (!snapshot.offTrack) {
+          sawOnRoadSample = true;
           peakSlip = Math.max(peakSlip, snapshot.slip);
           sawDrifting ||= snapshot.drifting;
         }
-        await page.waitForTimeout(70);
+        await page.waitForTimeout(80);
       }
+      expect(sawOnRoadSample, `${car.name} never produced an on-road sample`).toBe(true);
 
       expect(
         sawDrifting,
@@ -154,4 +163,59 @@ test.describe('drift mechanic', () => {
       await page.evaluate(() => window.__THREE_GAME_TEST_HOOKS__?.release());
     });
   }
+
+  /**
+   * Running wide is not a drift.
+   *
+   * The barrier used to shove the car back toward the road at 55 m/s^2 —
+   * several times tyre grip — while leaving the heading untouched. Slip angle
+   * is the gap between heading and travel, so all of that shove landed as
+   * slip: measured going from 6.7 degrees to 87 within a second of contact,
+   * with 102 km/h collapsing to 2. Clipping a verge spun the car and paid out
+   * drift score for it.
+   *
+   * Only the starter car is covered. This is a property of the barrier, not of
+   * any car's tuning, and the excursion takes long enough that running it
+   * three times buys nothing.
+   */
+  test('being pushed by the barrier does not count as a drift', async ({ page }) => {
+    await startRace(page, CARS[0].id);
+    await getUpToSpeed(page, 90);
+
+    // Hold a turn until the car runs wide and reaches the barrier.
+    //
+    // `waitForFunction` rather than `expect.poll`: poll backs off to second-long
+    // gaps, and where the car ends up depends on where on the circuit it was
+    // when the steering went on, so a late start changed the excursion entirely
+    // and the barrier was sometimes never reached. This samples every frame.
+    await page.evaluate(() => window.__THREE_GAME_TEST_HOOKS__?.drive(1, 0.6));
+    await page.waitForFunction(
+      () => window.__THREE_GAME_DIAGNOSTICS__?.player.atBarrier === true,
+      undefined,
+      { timeout: 15000 },
+    );
+
+    let peakSlip = 0;
+    let sawDrifting = false;
+    for (let i = 0; i < 14; i += 1) {
+      const snapshot = await page.evaluate(() => {
+        const d = window.__THREE_GAME_DIAGNOSTICS__;
+        return {
+          slip: Math.abs(d?.player.slipDegrees ?? 0),
+          drifting: d?.player.drifting ?? false,
+        };
+      });
+      peakSlip = Math.max(peakSlip, snapshot.slip);
+      sawDrifting ||= snapshot.drifting;
+      await page.waitForTimeout(70);
+    }
+
+    // Measured at 9.1 degrees over three runs once the barrier turns the
+    // heading along with the velocity. 25 leaves room for surface and
+    // entry-angle variation while staying far below the 87 that started this.
+    expect(peakSlip, `barrier contact produced ${peakSlip.toFixed(1)}deg of slip`).toBeLessThan(25);
+    expect(sawDrifting, 'barrier contact registered as a drift').toBe(false);
+
+    await page.evaluate(() => window.__THREE_GAME_TEST_HOOKS__?.release());
+  });
 });

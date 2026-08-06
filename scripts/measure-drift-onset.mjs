@@ -20,7 +20,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const CARS = ['comet', 'vortex', 'ember'];
 const SPEEDS_KPH = [60, 90, 120, 150, 180];
-const STEERS = [0.5, 1.0];
+// Small inputs matter most: a player complaining that the car snaps loose "on
+// a slight turn" is not holding full lock, and the top of the speed range is
+// where the grip clamp has the least room.
+const STEERS = [0.2, 0.35, 0.5, 0.75, 1.0];
+/** Samples per turn x sample interval. Long enough for slip to build, not just spike. */
+const SAMPLES = 30;
 
 let browser;
 try {
@@ -81,21 +86,36 @@ for (const carId of CARS) {
 
       // Steer, no handbrake. Sample peak slip over the turn.
       await page.evaluate((s) => window.__THREE_GAME_TEST_HOOKS__?.drive(1, s), steer);
+      // Held at a constant steering angle the car eventually leaves the road,
+      // and grass halves grip — so an off-track sample says nothing about
+      // whether steering alone breaks traction *on the road*, which is the
+      // actual complaint. Judge on-road samples only, and report the off-road
+      // ones separately rather than throwing them away.
       let peakSlip = 0;
       let drifted = false;
+      let peakSlipOff = 0;
+      let driftedOff = false;
+      let leftRoad = false;
       let entrySpeed = 0;
-      for (let i = 0; i < 12; i += 1) {
+      for (let i = 0; i < SAMPLES; i += 1) {
         const d = await page.evaluate(() => {
           const g = window.__THREE_GAME_DIAGNOSTICS__;
           return {
             slip: Math.abs(g?.player.slipDegrees ?? 0),
             drifting: g?.player.drifting ?? false,
             kph: g?.player.speedKph ?? 0,
+            off: g?.player.offTrack ?? false,
           };
         });
         if (i === 0) entrySpeed = d.kph;
-        peakSlip = Math.max(peakSlip, d.slip);
-        drifted ||= d.drifting;
+        if (d.off) {
+          leftRoad = true;
+          peakSlipOff = Math.max(peakSlipOff, d.slip);
+          driftedOff ||= d.drifting;
+        } else {
+          peakSlip = Math.max(peakSlip, d.slip);
+          drifted ||= d.drifting;
+        }
         await sleep(80);
       }
       await page.evaluate(() => window.__THREE_GAME_TEST_HOOKS__?.release());
@@ -108,6 +128,9 @@ for (const carId of CARS) {
         entrySpeedKph: Math.round(entrySpeed),
         peakSlipDeg: Number(peakSlip.toFixed(1)),
         driftedWithoutHandbrake: drifted,
+        leftRoad,
+        peakSlipOffDeg: Number(peakSlipOff.toFixed(1)),
+        driftedOffRoad: driftedOff,
       });
     }
   }
@@ -115,7 +138,8 @@ for (const carId of CARS) {
 
 await browser.close();
 
-console.log('car     steer  targetKph  entryKph  peakSlip  driftedNoHandbrake');
+console.log('ON ROAD (the case that matters) | OFF ROAD (grass, grip halved)');
+console.log('car     steer  targetKph  entryKph  peakSlip  drifted | leftRoad  peakSlip  drifted');
 for (const r of rows) {
   if (!r.reachable) {
     console.log(`${r.carId.padEnd(7)} ${String(r.steer).padEnd(6)} ${String(r.targetKph).padEnd(10)} (never reached that speed)`);
@@ -123,11 +147,14 @@ for (const r of rows) {
   }
   console.log(
     `${r.carId.padEnd(7)} ${String(r.steer).padEnd(6)} ${String(r.targetKph).padEnd(10)} ` +
-      `${String(r.entrySpeedKph).padEnd(9)} ${String(r.peakSlipDeg).padEnd(9)} ${r.driftedWithoutHandbrake ? 'YES' : 'no'}`,
+      `${String(r.entrySpeedKph).padEnd(9)} ${String(r.peakSlipDeg).padEnd(9)} ` +
+      `${(r.driftedWithoutHandbrake ? 'YES' : 'no').padEnd(7)} | ` +
+      `${(r.leftRoad ? 'yes' : 'no').padEnd(9)} ${String(r.peakSlipOffDeg).padEnd(9)} ` +
+      `${r.driftedOffRoad ? 'YES' : 'no'}`,
   );
 }
 
-console.log('\nLowest speed that drifts on steering alone:');
+console.log('\nLowest speed that drifts on steering alone, ON ROAD:');
 for (const carId of CARS) {
   for (const steer of STEERS) {
     const hit = rows.find(

@@ -24,6 +24,10 @@ interface ThreeGameDiagnostics {
     drifting: boolean;
     /** Cosmetic body lean, radians, fed straight to the model's rotation.z. */
     roll: number;
+    /** True once the car is off the road surface, where grip is halved. */
+    offTrack: boolean;
+    /** True while the soft barrier is pushing the car back toward the road. */
+    atBarrier: boolean;
   };
   lap: {
     time: number;

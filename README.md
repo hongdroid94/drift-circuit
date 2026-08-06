@@ -92,15 +92,40 @@ hard-coded it and every car silently capped at 66 km/h against a 187 km/h spec.
 rate `w` needs a lateral acceleration of `v*w`. Without a clamp the heading
 rotates at the full steering rate however little grip is left, and full lock at
 60 km/h produced 60-89 degrees of slip on every car — a spin, not a drift.
-`Vehicle` therefore limits the demanded yaw to `lateralGrip * allowance / v`,
-where the allowance is a sliver above 1 for normal steering and much larger
-under the handbrake. Measured with `npm run measure:drift`:
+`Vehicle` therefore limits the demanded yaw to `grip * allowance / v`.
 
-| | full lock, no handbrake | |
+Two details in that formula were each worth a bug:
+
+- **`allowance` is exactly 1 for ordinary steering**, not "a sliver above". At
+  1.15 the car demanded 15% more grip than it had, and that deficit *accumulates*
+  for as long as the turn is held — full lock reached 22 degrees and tripped an
+  unasked-for drift. Anything above 1 belongs to the handbrake (3.2) and to
+  sustaining a slide already underway.
+- **`grip` is the grip that actually exists**, not the nominal `lateralGrip`.
+  Using the nominal figure meant that on grass, where grip is halved, the clamp
+  still authorised full-grip rotation — and once the slide tripped `isDrifting`
+  the grip halved *again* while the allowance went up. Brushing a verge became
+  an 88-degree spin.
+
+The handbrake is deliberately exempt from the second rule: it locks the rear
+axle only, and the front is what steers. Charging it against steering as well
+cut the yaw rate by 3.3x the instant the player pulled it, and the starter car
+lost the ability to drift at all.
+
+Measured with `npm run measure:drift`, holding each turn for 2.4 s:
+
+| on road, no handbrake | before | after |
 |---|---|---|
-| | before | after |
-| Peak slip | 60-89 deg (spin) | 5-20 deg |
-| Drifts at | 60 km/h, every car | Comet/Ember never, Vortex 120 km/h |
+| Peak slip, full lock | 22-27 deg | 2-10 deg |
+| Drifts on steering alone | Comet/Vortex/Ember at 120 km/h | never, at any speed or lock |
+
+**The barrier redirects the car instead of shoving it.** It used to add 55 m/s^2
+inward — several times tyre grip — and leave the heading alone. Slip angle *is*
+the gap between heading and travel, so the shove landed as slip: 6.7 degrees
+became 87 within a second of contact, and 102 km/h collapsed to 2. Now contact
+cancels the outward velocity component and turns the heading by however much the
+velocity turned, so a scrape stays a scrape. Same idea as the yaw clamp — never
+move the car in a way the car cannot account for.
 
 **Analytic ground queries, not raycasts.** The track is a closed Catmull-Rom
 spline sampled every ~2 m into a uniform grid. Height, lateral offset, road width
@@ -154,7 +179,7 @@ npm run verify:production   # smoke-tests the built bundle through the real UI
 | Suite | What it guards |
 |---|---|
 | `visual.spec.ts` | Boots, renders a non-blank scene, responds to input, clean console |
-| `drift.spec.ts` | **Every car can break traction with realistic input and bank boost** |
+| `drift.spec.ts` | **Every car can break traction with realistic input and bank boost**, steering alone never does, and barrier contact is not scored as a drift |
 | `bot-playtest.spec.ts` | All three circuits are drivable end to end; laps validate |
 | `car-model.spec.ts` | **Basis convention and mesh orientation** — no browser needed |
 | `body-lean.spec.ts` | The car leans *out* of corners, not into them |
@@ -162,6 +187,12 @@ npm run verify:production   # smoke-tests the built bundle through the real UI
 `drift.spec.ts` asserts both directions of the mechanic per car: the handbrake
 *must* break traction and bank boost, and full lock *must not*. Tuning that
 satisfies only one of those is a broken game either way.
+
+It holds full lock for 2.4 s and ignores off-road samples. An earlier version
+watched for 0.8 s and discarded anything under 40 km/h, and passed a build that
+reached 22 degrees and drifted at 2.4 s — it stopped looking immediately before
+the failure it existed to catch. Any test for something that *accumulates* has
+to outlast the accumulation.
 
 `npm run diagnose:steering` measures, objectively, whether "steer right" moves the
 car toward the right-hand side of the *screen*. It projects the car's
@@ -203,8 +234,13 @@ requires banking drift boost, which the bot never does.
 | Circuit | Autopilot best lap | Gold / Silver / Bronze |
 |---|---|---|
 | Sunset Loop | 21.9 s | 20 / 22 / 25 |
-| Ridge Run | 33.1 s | 30 / 33 / 37 |
-| Harbor Twist | 41.0 s | 37 / 41 / 45.5 |
+| Ridge Run | 32.3 s | 30 / 33 / 37 |
+| Harbor Twist | 40.7 s | 37 / 41 / 45.5 |
+
+Ridge and Harbor dropped 0.8 s and 0.3 s when the barrier stopped scrubbing the
+car to a standstill on contact. Silver is left where it is: it still sits just
+the wrong side of the bot's best on all three circuits, which is the
+relationship it is supposed to have.
 
 ---
 
