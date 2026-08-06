@@ -94,3 +94,33 @@ test('right vector is forward x up, i.e. screen-right for a chase camera', () =>
     );
   }
 });
+
+/**
+ * Which way a roll angle actually tips the car.
+ *
+ * `Vehicle` integrates a roll angle from lateral acceleration and `Game`
+ * assigns it straight to `body.rotation.z`. Whether that reads as leaning into
+ * or out of a corner depends on the model's local axes, which is exactly the
+ * kind of sign chain that has already shipped backwards here twice. So it is
+ * measured off the built geometry rather than reasoned about.
+ *
+ * The car's right side is local -X: the shared basis is `right = forward x up`,
+ * and at yaw 0 that is (-1, 0, 0) while the model's local axes coincide with
+ * world. This test pins the half of the chain that lives in the model; the
+ * browser-side lean test pins the sign `Vehicle` feeds in.
+ */
+test('positive body roll drops the car right side', () => {
+  const model = createCarModel(CARS[0]);
+  model.body.rotation.z = 0.16;
+  model.root.updateMatrixWorld(true);
+
+  const rightSide = model.body.localToWorld(new THREE.Vector3(-1, 0, 0));
+  const leftSide = model.body.localToWorld(new THREE.Vector3(1, 0, 0));
+
+  expect(
+    rightSide.y,
+    `right side y ${rightSide.y.toFixed(3)} should sit below left side y ${leftSide.y.toFixed(3)}`,
+  ).toBeLessThan(leftSide.y);
+
+  model.dispose();
+});

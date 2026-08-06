@@ -157,6 +157,7 @@ npm run verify:production   # smoke-tests the built bundle through the real UI
 | `drift.spec.ts` | **Every car can break traction with realistic input and bank boost** |
 | `bot-playtest.spec.ts` | All three circuits are drivable end to end; laps validate |
 | `car-model.spec.ts` | **Basis convention and mesh orientation** — no browser needed |
+| `body-lean.spec.ts` | The car leans *out* of corners, not into them |
 
 `drift.spec.ts` asserts both directions of the mechanic per car: the handbrake
 *must* break traction and bank boost, and full lock *must not*. Tuning that
@@ -183,6 +184,13 @@ behind a working-looking screenshot.
 Because `yaw` grows toward the car's left (`d(forward)/d(yaw) = -right`),
 right-positive steering input enters `Vehicle` with a negative sign.
 `car-model.spec.ts` asserts all of this directly.
+
+Anything derived from `right` inherits its sign, and fixing the basis therefore
+*broke* the one place that had been compensating for it: cosmetic body roll came
+out of the fix leaning into corners like a motorbike. It is measured now —
+`car-model.spec.ts` pins which side a positive `rotation.z` drops,
+`body-lean.spec.ts` pins the sign `Vehicle` feeds it, and neither assumes the
+other's convention.
 
 `drift.spec.ts` exists because the failure it catches is silent: tuning can leave
 a car whose slip threshold is so high that ordinary play never registers a drift.
@@ -240,6 +248,3 @@ game has.
 - **Ghost is transform-sampled, not input-replayed** — a few KB per lap, but it
   survives physics tuning, which input replay would not.
 - Rewarded-ad hooks exist in `Portal` but nothing in the game spends them yet.
-- Body roll direction during cornering has not been visually verified; it is
-  cosmetic and derived from lateral acceleration, so a sign error there would be
-  subtle rather than obvious.

@@ -22,6 +22,8 @@ interface ThreeGameDiagnostics {
     progress: number;
     grounded: boolean;
     drifting: boolean;
+    /** Cosmetic body lean, radians, fed straight to the model's rotation.z. */
+    roll: number;
   };
   lap: {
     time: number;

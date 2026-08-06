@@ -362,7 +362,15 @@ export class Vehicle {
    */
   private updateVisualLean(dt: number, longAccel: number, latAccel: number): void {
     const targetPitch = THREE.MathUtils.clamp(-longAccel * 0.006, -0.09, 0.09);
-    const targetRoll = THREE.MathUtils.clamp(latAccel * 0.009, -0.16, 0.16);
+    // Negated because the body leans AWAY from the corner: turning right throws
+    // the mass left, so the right side rises. Positive `rotation.z` drops the
+    // right side (measured in car-model.spec.ts), hence a right-hand turn —
+    // positive `latAccel` — has to produce negative roll.
+    //
+    // This was correct until the coordinate basis was fixed: `right` used to be
+    // the car's left, which flipped `latAccel` and cancelled out the missing
+    // minus sign here. Fixing the basis left this one leaning into corners.
+    const targetRoll = THREE.MathUtils.clamp(-latAccel * 0.009, -0.16, 0.16);
     const blend = 1 - Math.exp(-9 * dt);
     this.pitch += (targetPitch - this.pitch) * blend;
     this.roll += (targetRoll - this.roll) * blend;

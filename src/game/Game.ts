@@ -235,6 +235,7 @@ export class Game {
         progress: v?.progress ?? 0,
         grounded: v?.grounded ?? true,
         drifting: v?.isDrifting ?? false,
+        roll: v?.roll ?? 0,
       },
       lap: {
         time: this.lapTimer.current,
